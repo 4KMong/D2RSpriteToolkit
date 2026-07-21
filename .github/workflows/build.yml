@@ -1,0 +1,93 @@
+name: Build Windows release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Build and package
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $compilerCandidates = @(
+            "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
+            "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+          )
+
+          $csc = $compilerCandidates |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+
+          if (-not $csc) {
+            throw 'The .NET Framework C# compiler (csc.exe) was not found on the runner.'
+          }
+
+          $compilerArguments = @(
+            '/nologo',
+            '/target:winexe',
+            '/platform:anycpu',
+            '/optimize+',
+            '/codepage:65001',
+            '/win32manifest:app.manifest',
+            '/win32icon:app.ico',
+            '/resource:logo.png,D2RSpriteToolkit.logo.png',
+            '/resource:loading.png,D2RSpriteToolkit.loading.png',
+            '/resource:tray.ico,D2RSpriteToolkit.tray.ico',
+            '/resource:lang\en.lng,D2RSpriteToolkit.lang.en.lng',
+            '/resource:lang\ko.lng,D2RSpriteToolkit.lang.ko.lng',
+            '/out:D2RSpriteTK.exe',
+            'Program.cs',
+            '/reference:System.dll',
+            '/reference:System.Core.dll',
+            '/reference:System.Drawing.dll',
+            '/reference:System.Windows.Forms.dll'
+          )
+
+          & $csc $compilerArguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "Compilation failed with exit code $LASTEXITCODE."
+          }
+
+          $releaseRoot = Join-Path $PWD 'release'
+          $stageDirectory = Join-Path $releaseRoot 'D2RSpriteToolkit_v4.0.0'
+          $zipPath = Join-Path $releaseRoot 'D2RSpriteToolkit_v4.0.0_Windows.zip'
+
+          Remove-Item -LiteralPath $releaseRoot -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $stageDirectory -Force | Out-Null
+
+          Copy-Item -LiteralPath 'D2RSpriteTK.exe' -Destination $stageDirectory
+          Copy-Item -LiteralPath 'LICENSE' -Destination $stageDirectory
+          Copy-Item -LiteralPath 'NOTICE.md' -Destination $stageDirectory
+          Copy-Item -LiteralPath 'RELEASE_NOTES_v4.0.0.md' -Destination $stageDirectory
+
+          Compress-Archive `
+            -Path (Join-Path $stageDirectory '*') `
+            -DestinationPath $zipPath `
+            -CompressionLevel Optimal
+
+          if (-not (Test-Path -LiteralPath $zipPath)) {
+            throw 'The release package was not created.'
+          }
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v7
+        with:
+          path: release/D2RSpriteToolkit_v4.0.0_Windows.zip
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
