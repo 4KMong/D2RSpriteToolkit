@@ -111,6 +111,23 @@ This project uses a source-available license that permits modification and non-c
 
 See [`LICENSE`](LICENSE) for the complete terms.
 
+## Translation Contributions
+
+Community translations are welcome.
+
+To contribute a translation:
+
+1. Copy `lang/en.lng`.
+2. Rename it using an appropriate language code, such as `de.lng`, `fr.lng`, or `es.lng`.
+3. Translate only the text after each `=` sign.
+4. Do not modify translation keys or placeholders such as `{0}`.
+5. Save the file as UTF-8.
+6. Submit the translated file through a GitHub pull request or issue.
+
+Please note that new language files must be reviewed and integrated into a future application release. Adding an `.lng` file alone does not automatically add the language to the application menu.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed instructions.
+
 ## Rights Notice
 
 Diablo II: Resurrected and related names and trademarks are the property of their respective owners. This repository does not distribute original game data files owned by Blizzard Entertainment.
