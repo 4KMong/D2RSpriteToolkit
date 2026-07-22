@@ -64,8 +64,8 @@ jobs:
           }
 
           $releaseRoot = Join-Path $PWD 'release'
-          $stageDirectory = Join-Path $releaseRoot 'D2RSpriteToolkit_v4.0.0'
-          $zipPath = Join-Path $releaseRoot 'D2RSpriteToolkit_v4.0.0_Windows.zip'
+          $stageDirectory = Join-Path $releaseRoot 'D2RSpriteToolkit_v4.0.1'
+          $zipPath = Join-Path $releaseRoot 'D2RSpriteToolkit_v4.0.1_Windows.zip'
 
           Remove-Item -LiteralPath $releaseRoot -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $stageDirectory -Force | Out-Null
@@ -73,7 +73,7 @@ jobs:
           Copy-Item -LiteralPath 'D2RSpriteTK.exe' -Destination $stageDirectory
           Copy-Item -LiteralPath 'LICENSE' -Destination $stageDirectory
           Copy-Item -LiteralPath 'NOTICE.md' -Destination $stageDirectory
-          Copy-Item -LiteralPath 'RELEASE_NOTES_v4.0.0.md' -Destination $stageDirectory
+          Copy-Item -LiteralPath 'RELEASE_NOTES_v4.0.1.md' -Destination $stageDirectory
 
           Compress-Archive `
             -Path (Join-Path $stageDirectory '*') `
@@ -87,7 +87,7 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v7
         with:
-          path: release/D2RSpriteToolkit_v4.0.0_Windows.zip
+          path: release/D2RSpriteToolkit_v4.0.1_Windows.zip
           archive: false
           if-no-files-found: error
           retention-days: 30
