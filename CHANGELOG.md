@@ -1,5 +1,12 @@
 # Changelog
 
+## 4.0.1 - Frame Template Dimension Fix
+
+- Changed PNG-to-Sprite frame-template conversion to trust the template frame count instead of its incorrect total dimensions
+- Recalculate frame width, total width, height, bytes per pixel, and payload size from the source PNG
+- Reject conversion only when the PNG width cannot be divided evenly by the template frame count
+- Preserve the remaining compatible template header values
+
 ## 4.0.0 - Initial Public Release
 
 - Added low-resolution PNG generation with custom size and suffix options

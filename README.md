@@ -14,7 +14,7 @@ It combines low-resolution PNG generation, Sprite preview and conversion, and ba
 - Preview `.sprite` files and inspect their metadata
 - Convert Sprite files to PNG
 - Convert PNG files to static Sprite files
-- Use a same-name frame Sprite as a template to preserve its header and frame structure
+- Use a same-name frame Sprite as a template while rebuilding frame dimensions from the PNG
 - Batch rename files with prefixes, suffixes, text replacement, and partial deletion
 - Drag and drop files or directories
 - Korean and English user interfaces
@@ -56,8 +56,8 @@ Additional distribution pages:
 ### Convert PNG to Sprite
 
 1. Load a PNG file.
-2. If a same-name frame Sprite exists in the same directory, it is used as a template automatically.
-3. Without a template, the PNG is converted to a static Sprite.
+2. If a same-name frame Sprite exists in the same directory, its frame count is used automatically.
+3. The PNG width must divide evenly by the template frame count; without a template, the PNG is converted to a static Sprite.
 4. Run the PNG-to-Sprite conversion.
 
 Always keep a separate backup of the original files. Compatibility may vary depending on game updates and the structure of the target resource.
@@ -69,7 +69,7 @@ The authoritative build definition is `.github/workflows/build.yml`.
 GitHub Actions builds the application on a Windows runner, embeds all required resources, and produces:
 
 ```text
-D2RSpriteToolkit_v4.0.0_Windows.zip
+D2RSpriteToolkit_v4.0.1_Windows.zip
 ```
 
 The package contains:
@@ -78,7 +78,7 @@ The package contains:
 D2RSpriteTK.exe
 LICENSE
 NOTICE.md
-RELEASE_NOTES_v4.0.0.md
+RELEASE_NOTES_v4.0.1.md
 ```
 
 No BAT or local build wrapper is included because the GitHub Actions workflow performs the complete build and packaging process directly.
@@ -102,7 +102,7 @@ D2RSpriteToolkit/
 ├─ CONTRIBUTING.md
 ├─ LICENSE
 ├─ NOTICE.md
-└─ RELEASE_NOTES_v4.0.0.md
+└─ RELEASE_NOTES_v4.0.1.md
 ```
 
 ## License
@@ -110,23 +110,6 @@ D2RSpriteToolkit/
 This project uses a source-available license that permits modification and non-commercial redistribution under specific attribution, version-identification, and change-disclosure requirements.
 
 See [`LICENSE`](LICENSE) for the complete terms.
-
-## Translation Contributions
-
-Community translations are welcome.
-
-To contribute a translation:
-
-1. Copy `lang/en.lng`.
-2. Rename it using an appropriate language code, such as `de.lng`, `fr.lng`, or `es.lng`.
-3. Translate only the text after each `=` sign.
-4. Do not modify translation keys or placeholders such as `{0}`.
-5. Save the file as UTF-8.
-6. Submit the translated file through a GitHub pull request or issue.
-
-Please note that new language files must be reviewed and integrated into a future application release. Adding an `.lng` file alone does not automatically add the language to the application menu.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed instructions.
 
 ## Rights Notice
 

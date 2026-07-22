@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -16,8 +16,8 @@ using Microsoft.Win32;
 [assembly: AssemblyProduct("D2R Sprite Toolkit")]
 [assembly: AssemblyDescription("PNG and Sprite conversion toolkit for Diablo II: Resurrected modding")]
 [assembly: AssemblyCopyright("Copyright © 2026 D2R Sprite Toolkit contributors")]
-[assembly: AssemblyVersion("4.0.0.0")]
-[assembly: AssemblyFileVersion("4.0.0.0")]
+[assembly: AssemblyVersion("4.0.1.0")]
+[assembly: AssemblyFileVersion("4.0.1.0")]
 
 namespace D2RSpriteToolkit
 {
@@ -542,7 +542,7 @@ namespace D2RSpriteToolkit
     internal sealed class MainForm : Form
     {
         private const string RegistryPath = @"Software\D2RSpriteToolkit";
-        private const string AppVersion = "4.0.0";
+        private const string AppVersion = "4.0.1";
 
         private const string InvenLinkUrl = "https://www.inven.co.kr/board/diablo2/5842/7796";
         private const string NexusLinkUrl = "https://www.nexusmods.com/diablo2resurrected/mods/1144";
@@ -7060,26 +7060,40 @@ namespace D2RSpriteToolkit
             byte[] templateBytes = File.ReadAllBytes(templateSpritePath);
             if (templateBytes.Length < HeaderSize) throw new InvalidOperationException("프레임 템플릿 sprite 헤더가 너무 짧습니다.");
 
-            int width = BitConverter.ToInt32(templateBytes, 0x08);
-            int height = BitConverter.ToInt32(templateBytes, 0x0C);
-            int payloadSize = BitConverter.ToInt32(templateBytes, 0x20);
-            int bytesPerPixel = BitConverter.ToInt32(templateBytes, 0x24);
+            int frameCount = BitConverter.ToInt32(templateBytes, 0x14);
+            int templateBytesPerPixel = BitConverter.ToInt32(templateBytes, 0x24);
+            int width = source.Width;
+            int height = source.Height;
 
-            if (!IsSafeDimension(width, height)) throw new InvalidOperationException("프레임 템플릿 sprite 크기가 비정상입니다: " + width + " * " + height);
-            if (bytesPerPixel != 4) throw new InvalidOperationException("현재는 RGBA/BPP 4 sprite 템플릿만 지원합니다.");
-            if (source.Width != width || source.Height != height)
+            if (frameCount <= 0) throw new InvalidOperationException("프레임 템플릿 sprite의 프레임 개수가 비정상입니다: " + frameCount);
+            if (templateBytesPerPixel != 4) throw new InvalidOperationException("현재는 RGBA/BPP 4 sprite 템플릿만 지원합니다.");
+            if (!IsSafeDimension(width, height)) throw new InvalidOperationException("PNG 크기가 비정상입니다: " + width + " * " + height);
+            if (width % frameCount != 0)
             {
-                throw new InvalidOperationException("PNG 크기와 프레임 템플릿 sprite 크기가 다릅니다. PNG " + source.Width + " * " + source.Height + ", template " + width + " * " + height);
+                throw new InvalidOperationException("PNG 너비 " + width + "px를 템플릿의 " + frameCount + "개 프레임으로 균등하게 나눌 수 없습니다. PNG 너비를 프레임 개수의 배수로 조정하십시오.");
             }
 
-            long expectedPayloadSize = (long)width * (long)height * 4L;
-            if (expectedPayloadSize > int.MaxValue || payloadSize != (int)expectedPayloadSize) throw new InvalidOperationException("프레임 템플릿 sprite의 페이로드 크기가 PNG RGBA 크기와 맞지 않습니다.");
+            int frameWidth = width / frameCount;
+            if (frameWidth <= 0 || frameWidth > ushort.MaxValue)
+            {
+                throw new InvalidOperationException("계산된 프레임 너비가 지원 범위를 벗어났습니다: " + frameWidth + "px");
+            }
+
+            long payloadSizeLong = (long)width * (long)height * 4L;
+            if (payloadSizeLong > int.MaxValue) throw new InvalidOperationException("PNG RGBA 데이터가 너무 큽니다.");
 
             byte[] payload = ExtractRgbaPayload(source);
-            if (payload.Length != payloadSize) throw new InvalidOperationException("PNG RGBA 데이터 크기가 프레임 템플릿 sprite 페이로드 크기와 맞지 않습니다.");
+            if (payload.Length != (int)payloadSizeLong) throw new InvalidOperationException("PNG RGBA 데이터 크기가 계산된 sprite 페이로드 크기와 맞지 않습니다.");
 
             byte[] header = new byte[HeaderSize];
             Buffer.BlockCopy(templateBytes, 0, header, 0, HeaderSize);
+
+            Buffer.BlockCopy(BitConverter.GetBytes((ushort)frameWidth), 0, header, 0x06, 2);
+            Buffer.BlockCopy(BitConverter.GetBytes(width), 0, header, 0x08, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(height), 0, header, 0x0C, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(frameCount), 0, header, 0x14, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(payload.Length), 0, header, 0x20, 4);
+            Buffer.BlockCopy(BitConverter.GetBytes(4), 0, header, 0x24, 4);
 
             string dir = Path.GetDirectoryName(output) ?? string.Empty;
             string temp = Path.Combine(dir, "__sprite_tmp_" + Guid.NewGuid().ToString("N") + ".sprite");
