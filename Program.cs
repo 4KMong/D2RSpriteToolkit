@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -16,8 +16,8 @@ using Microsoft.Win32;
 [assembly: AssemblyProduct("D2R Sprite Toolkit")]
 [assembly: AssemblyDescription("PNG and Sprite conversion toolkit for Diablo II: Resurrected modding")]
 [assembly: AssemblyCopyright("Copyright © 2026 D2R Sprite Toolkit contributors")]
-[assembly: AssemblyVersion("4.0.1.0")]
-[assembly: AssemblyFileVersion("4.0.1.0")]
+[assembly: AssemblyVersion("4.0.2.0")]
+[assembly: AssemblyFileVersion("4.0.2.0")]
 
 namespace D2RSpriteToolkit
 {
@@ -542,7 +542,7 @@ namespace D2RSpriteToolkit
     internal sealed class MainForm : Form
     {
         private const string RegistryPath = @"Software\D2RSpriteToolkit";
-        private const string AppVersion = "4.0.1";
+        private const string AppVersion = "4.0.2";
 
         private const string InvenLinkUrl = "https://www.inven.co.kr/board/diablo2/5842/7796";
         private const string NexusLinkUrl = "https://www.nexusmods.com/diablo2resurrected/mods/1144";
@@ -2028,23 +2028,53 @@ namespace D2RSpriteToolkit
             return D2RSpritePreview.TryReadSpriteInfo(path, out info);
         }
 
-        private bool TryFindLoadedFrameTemplateForPng(string pngPath, out D2RSpriteInfo info)
+        private enum FrameTemplateLookupStatus
         {
-            string templatePath;
-            return TryFindLoadedFrameTemplateForPng(pngPath, out info, out templatePath);
+            None = 0,
+            Valid = 1,
+            Invalid = 2
         }
 
-        private bool TryFindLoadedFrameTemplateForPng(string pngPath, out D2RSpriteInfo info, out string templatePath)
+        private bool TryFindFrameTemplateForPng(string pngPath, out D2RSpriteInfo info)
+        {
+            string templatePath;
+            string error;
+            FrameTemplateLookupStatus status = FindFrameTemplateForPng(pngPath, out info, out templatePath, out error);
+            return status == FrameTemplateLookupStatus.Valid && info != null && info.FrameCount >= 2;
+        }
+
+        private FrameTemplateLookupStatus FindFrameTemplateForPng(string pngPath, out D2RSpriteInfo info, out string templatePath, out string error)
         {
             info = null;
             templatePath = string.Empty;
-            if (string.IsNullOrEmpty(pngPath)) return false;
+            error = string.Empty;
+            if (string.IsNullOrEmpty(pngPath)) return FrameTemplateLookupStatus.None;
+
             string dir = Path.GetDirectoryName(pngPath) ?? string.Empty;
             string baseName = Path.GetFileNameWithoutExtension(pngPath) ?? string.Empty;
             templatePath = Path.GetFullPath(Path.Combine(dir, baseName + ".sprite"));
-            if (!fileSet.Contains(templatePath)) return false;
-            if (!TryReadLoadedSpriteInfo(templatePath, out info)) return false;
-            return Math.Max(1, info.FrameCount) >= 2;
+            if (!File.Exists(templatePath)) return FrameTemplateLookupStatus.None;
+
+            if (!TryReadLoadedSpriteInfo(templatePath, out info))
+            {
+                error = T(
+                    "error.frame_template_invalid",
+                    "A same-name Sprite exists but cannot be read as a valid frame template: {0}",
+                    Path.GetFileName(templatePath));
+                return FrameTemplateLookupStatus.Invalid;
+            }
+
+            if (info.FrameCount <= 0)
+            {
+                error = T(
+                    "error.frame_template_count_invalid",
+                    "The same-name Sprite has an invalid frame count ({0}): {1}",
+                    info.FrameCount,
+                    Path.GetFileName(templatePath));
+                return FrameTemplateLookupStatus.Invalid;
+            }
+
+            return FrameTemplateLookupStatus.Valid;
         }
 
         private bool IsFrameSpriteEntry(FileEntry entry)
@@ -2056,7 +2086,7 @@ namespace D2RSpriteToolkit
         private bool HasLoadedFrameTemplateForPng(FileEntry entry)
         {
             D2RSpriteInfo info;
-            return entry != null && (IsTargetPng(entry.FullPath) || IsLowendPngFile(entry.FullPath)) && TryFindLoadedFrameTemplateForPng(entry.FullPath, out info);
+            return entry != null && (IsTargetPng(entry.FullPath) || IsLowendPngFile(entry.FullPath)) && TryFindFrameTemplateForPng(entry.FullPath, out info);
         }
 
         private static IEnumerable<string> GetMatchingSpritePathsForPng(string pngPath, bool includeLowendSprite)
@@ -2271,8 +2301,10 @@ namespace D2RSpriteToolkit
                 return;
             }
 
-            int templateCount = CountPngEntriesWithFrameTemplate(work);
-            string confirmMessage = BuildPngToSpriteConfirmMessage(work.Count, templateCount);
+            int templateCount;
+            int invalidTemplateCount;
+            CountPngTemplateStates(work, out templateCount, out invalidTemplateCount);
+            string confirmMessage = BuildPngToSpriteConfirmMessage(work.Count, templateCount, invalidTemplateCount);
             DialogResult confirm = MessageBox.Show(this, confirmMessage, "확인", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
             if (confirm != DialogResult.OK)
             {
@@ -2306,7 +2338,13 @@ namespace D2RSpriteToolkit
 
                             D2RSpriteInfo templateInfo;
                             string templatePath;
-                            if (TryFindLoadedFrameTemplateForPng(input, out templateInfo, out templatePath))
+                            string templateError;
+                            FrameTemplateLookupStatus templateStatus = FindFrameTemplateForPng(input, out templateInfo, out templatePath, out templateError);
+                            if (templateStatus == FrameTemplateLookupStatus.Invalid)
+                            {
+                                throw new InvalidOperationException(templateError);
+                            }
+                            if (templateStatus == FrameTemplateLookupStatus.Valid)
                             {
                                 D2RSpriteCodec.SaveRgbaSpriteUsingTemplate(src, templatePath, spriteOutput);
                             }
@@ -2343,40 +2381,60 @@ namespace D2RSpriteToolkit
             ShowConversionResult(fail, errors, "PNG → sprite 변환이 완료되었습니다.");
         }
 
-        private int CountPngEntriesWithFrameTemplate(List<FileEntry> work)
+        private void CountPngTemplateStates(List<FileEntry> work, out int templateCount, out int invalidTemplateCount)
         {
-            int count = 0;
-            if (work == null) return 0;
+            templateCount = 0;
+            invalidTemplateCount = 0;
+            if (work == null) return;
+
             for (int i = 0; i < work.Count; i++)
             {
+                if (work[i] == null) continue;
                 D2RSpriteInfo info;
-                if (work[i] != null && TryFindLoadedFrameTemplateForPng(work[i].FullPath, out info)) count++;
+                string templatePath;
+                string error;
+                FrameTemplateLookupStatus status = FindFrameTemplateForPng(work[i].FullPath, out info, out templatePath, out error);
+                if (status == FrameTemplateLookupStatus.Invalid)
+                {
+                    invalidTemplateCount++;
+                }
+                else if (status == FrameTemplateLookupStatus.Valid && info != null && info.FrameCount >= 2)
+                {
+                    templateCount++;
+                }
             }
-            return count;
         }
 
-        private string BuildPngToSpriteConfirmMessage(int pngCount, int templateCount)
+        private string BuildPngToSpriteConfirmMessage(int pngCount, int templateCount, int invalidTemplateCount)
         {
-            int staticCount = Math.Max(0, pngCount - templateCount);
+            int staticCount = Math.Max(0, pngCount - templateCount - invalidTemplateCount);
             StringBuilder sb = new StringBuilder();
             sb.AppendLine("PNG " + pngCount + "개를 스프라이트로 변환합니다.");
             sb.AppendLine(GetConversionScopeNotice());
             sb.AppendLine();
 
-            if (templateCount <= 0)
+            if (templateCount <= 0 && invalidTemplateCount <= 0)
             {
                 sb.AppendLine("프레임 템플릿이 첨부된 PNG가 없습니다.");
                 sb.AppendLine("모든 PNG는 정적 스프라이트로 변환됩니다.");
                 sb.AppendLine();
-                sb.AppendLine("애니메이션/커서 PNG는 같은 경로에 동일한 이름의 원본 .sprite 템플릿을 함께 첨부하면 헤더 정보를 유지해서 변환할 수 있습니다.");
+                sb.AppendLine("애니메이션/커서 PNG는 같은 경로에 동일한 이름의 원본 .sprite를 두면 프레임 개수를 사용하여 새 RGBA sprite로 변환할 수 있습니다.");
             }
             else
             {
-                sb.AppendLine("프레임 템플릿 첨부 : " + templateCount + "개");
+                sb.AppendLine("유효한 프레임 템플릿 : " + templateCount + "개");
                 sb.AppendLine("정적 변환 : " + staticCount + "개");
+                if (invalidTemplateCount > 0)
+                {
+                    sb.AppendLine("잘못된 동일명 sprite : " + invalidTemplateCount + "개 (변환 실패, 원본 보존)");
+                }
                 sb.AppendLine();
-                sb.AppendLine("템플릿이 첨부된 PNG는 같은 경로/동일명의 sprite 헤더를 유지해서 변환합니다.");
+                sb.AppendLine("유효한 템플릿은 프레임 개수와 알려진 magic 변형만 사용하고, PNG 기준의 새 RGBA v31 헤더로 변환합니다.");
                 sb.AppendLine("템플릿이 없는 PNG는 정적 스프라이트로 변환합니다.");
+                if (invalidTemplateCount > 0)
+                {
+                    sb.AppendLine("동일한 이름의 sprite가 손상되었거나 프레임 개수가 잘못된 경우에는 정적 변환으로 덮어쓰지 않습니다.");
+                }
             }
 
             sb.AppendLine();
@@ -2575,8 +2633,7 @@ namespace D2RSpriteToolkit
                     final.Save(temp, ImageFormat.Png);
                 }
 
-                if (File.Exists(output)) File.Delete(output);
-                File.Move(temp, output);
+                SafeFileCommit.Commit(temp, output);
             }
             finally
             {
@@ -2971,12 +3028,26 @@ namespace D2RSpriteToolkit
         private void AddPngTemplateModeInfo(List<PreviewInfoLine> infoLines, FileEntry entry)
         {
             if (infoLines == null) return;
-            D2RSpriteInfo info;
-            if (entry != null && TryFindLoadedFrameTemplateForPng(entry.FullPath, out info))
+
+            D2RSpriteInfo info = null;
+            string templatePath = string.Empty;
+            string error = string.Empty;
+            FrameTemplateLookupStatus status = entry == null
+                ? FrameTemplateLookupStatus.None
+                : FindFrameTemplateForPng(entry.FullPath, out info, out templatePath, out error);
+
+            if (status == FrameTemplateLookupStatus.Invalid)
+            {
+                infoLines.Add(new PreviewInfoLine(T("status.frame_template_invalid", "Invalid same-name Sprite template"), Color.Firebrick, false));
+                if (!string.IsNullOrEmpty(error)) infoLines.Add(new PreviewInfoLine(error, Color.Firebrick, false));
+                return;
+            }
+
+            if (status == FrameTemplateLookupStatus.Valid && info != null && info.FrameCount >= 2)
             {
                 infoLines.Add(new PreviewInfoLine(T("status.frame_template_attached", "(*) Frame template attached"), Color.ForestGreen, false));
                 infoLines.Add(new PreviewInfoLine(T("status.convert_mode_label", "Convert mode :"), Color.Firebrick, false));
-                infoLines.Add(new PreviewInfoLine(T("status.convert_mode_frame_value", "Frame sprite (keep header)"), Color.Firebrick, false));
+                infoLines.Add(new PreviewInfoLine(T("status.convert_mode_frame_value", "Frame sprite (use frame count)"), Color.Firebrick, false));
             }
             else
             {
@@ -3423,7 +3494,7 @@ namespace D2RSpriteToolkit
             D2RSpriteInfo info;
             if (IsLowendPngFile(path))
             {
-                return T("filetype.lowend_png", "lowend PNG") + (TryFindLoadedFrameTemplateForPng(path, out info) ? "*" : string.Empty);
+                return T("filetype.lowend_png", "lowend PNG") + (TryFindFrameTemplateForPng(path, out info) ? "*" : string.Empty);
             }
             if (IsLowendSpriteFile(path))
             {
@@ -3435,7 +3506,7 @@ namespace D2RSpriteToolkit
             }
             if (IsTargetPng(path))
             {
-                return T("filetype.png", "PNG") + (TryFindLoadedFrameTemplateForPng(path, out info) ? "*" : string.Empty);
+                return T("filetype.png", "PNG") + (TryFindFrameTemplateForPng(path, out info) ? "*" : string.Empty);
             }
             return string.Empty;
         }
@@ -7000,51 +7071,225 @@ namespace D2RSpriteToolkit
         }
     }
 
+    internal static class SafeFileCommit
+    {
+        public static void Commit(string tempPath, string outputPath)
+        {
+            if (string.IsNullOrEmpty(tempPath)) throw new ArgumentNullException("tempPath");
+            if (string.IsNullOrEmpty(outputPath)) throw new ArgumentNullException("outputPath");
+            if (!File.Exists(tempPath)) throw new FileNotFoundException("The completed temporary file was not found.", tempPath);
+
+            if (!File.Exists(outputPath))
+            {
+                File.Move(tempPath, outputPath);
+                return;
+            }
+
+            string directory = Path.GetDirectoryName(outputPath) ?? string.Empty;
+            string backupPath = Path.Combine(
+                directory,
+                "__replace_backup_" + Guid.NewGuid().ToString("N") + Path.GetExtension(outputPath));
+
+            try
+            {
+                try
+                {
+                    File.Replace(tempPath, outputPath, backupPath, true);
+                }
+                catch (NotSupportedException)
+                {
+                    ReplaceUsingBackupMove(tempPath, outputPath, backupPath);
+                }
+
+                TryDelete(backupPath);
+            }
+            catch
+            {
+                // File.Replace leaves the destination intact when it fails. The fallback
+                // restores the original path before rethrowing whenever possible.
+                throw;
+            }
+        }
+
+        private static void ReplaceUsingBackupMove(string tempPath, string outputPath, string backupPath)
+        {
+            File.Move(outputPath, backupPath);
+            try
+            {
+                File.Move(tempPath, outputPath);
+            }
+            catch (Exception moveError)
+            {
+                try
+                {
+                    if (File.Exists(outputPath)) File.Delete(outputPath);
+                    if (File.Exists(backupPath)) File.Move(backupPath, outputPath);
+                }
+                catch (Exception restoreError)
+                {
+                    throw new IOException(
+                        "The new file could not be installed and the original file could not be restored automatically. "
+                        + "The original backup remains at: " + backupPath,
+                        new AggregateException(moveError, restoreError));
+                }
+                throw;
+            }
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
+            {
+                if (File.Exists(path)) File.Delete(path);
+            }
+            catch
+            {
+                // A leftover backup is safer than risking the completed output.
+            }
+        }
+    }
+
     internal static class D2RSpriteCodec
     {
         private const int HeaderSize = 0x28;
         private const int MaxDimension = 32768;
         private const long MaxPixelCount = 134217728L;
+        private static readonly byte[] DefaultMagic = new byte[] { (byte)'S', (byte)'P', (byte)'a', (byte)'1' };
 
         public static void SaveStaticRgbaSprite(Bitmap source, string output)
         {
+            SaveRgbaSprite(source, 1, DefaultMagic, output);
+        }
+
+        public static void SaveRgbaSpriteUsingTemplate(Bitmap source, string templateSpritePath, string output)
+        {
             if (source == null) throw new ArgumentNullException("source");
+            if (string.IsNullOrEmpty(templateSpritePath) || !File.Exists(templateSpritePath))
+            {
+                throw new InvalidOperationException(Localization.T(
+                    "error.frame_template_missing",
+                    "The same-name frame-template Sprite file could not be found."));
+            }
+
+            byte[] templateBytes = new byte[HeaderSize];
+            using (FileStream templateStream = new FileStream(templateSpritePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+            {
+                if (templateStream.Length < HeaderSize)
+                {
+                    throw new InvalidOperationException(Localization.T(
+                        "error.frame_template_header_short",
+                        "The same-name frame-template Sprite header is too short: {0}",
+                        Path.GetFileName(templateSpritePath)));
+                }
+
+                int totalRead = 0;
+                while (totalRead < templateBytes.Length)
+                {
+                    int read = templateStream.Read(templateBytes, totalRead, templateBytes.Length - totalRead);
+                    if (read <= 0) break;
+                    totalRead += read;
+                }
+                if (totalRead != templateBytes.Length)
+                {
+                    throw new InvalidOperationException(Localization.T(
+                        "error.frame_template_header_short",
+                        "The same-name frame-template Sprite header is too short: {0}",
+                        Path.GetFileName(templateSpritePath)));
+                }
+            }
+            if (!IsKnownSpriteMagic(templateBytes))
+            {
+                throw new InvalidOperationException(Localization.T(
+                    "error.frame_template_magic",
+                    "The same-name Sprite has an unsupported magic value and cannot be used as a template: {0}",
+                    Path.GetFileName(templateSpritePath)));
+            }
+
+            int frameCount = BitConverter.ToInt32(templateBytes, 0x14);
+            if (frameCount <= 0)
+            {
+                throw new InvalidOperationException(Localization.T(
+                    "error.frame_template_count_invalid",
+                    "The same-name Sprite has an invalid frame count ({0}): {1}",
+                    frameCount,
+                    Path.GetFileName(templateSpritePath)));
+            }
+
+            byte[] magic = new byte[4];
+            Buffer.BlockCopy(templateBytes, 0, magic, 0, magic.Length);
+            SaveRgbaSprite(source, frameCount, magic, output);
+        }
+
+        private static void SaveRgbaSprite(Bitmap source, int frameCount, byte[] magic, string output)
+        {
+            if (source == null) throw new ArgumentNullException("source");
+            if (frameCount <= 0) throw new InvalidOperationException(Localization.T("error.frame_count_invalid", "The Sprite frame count is invalid: {0}", frameCount));
+
             int width = source.Width;
             int height = source.Height;
+            if (!IsSafeDimension(width, height))
+            {
+                throw new InvalidOperationException(Localization.T("error.png_dimensions_invalid", "The PNG dimensions are invalid: {0} * {1}", width, height));
+            }
+            if (width % frameCount != 0)
+            {
+                throw new InvalidOperationException(Localization.T(
+                    "error.frame_width_not_divisible",
+                    "PNG width {0}px cannot be divided evenly into {1} template frames. Adjust the PNG width to a multiple of the frame count.",
+                    width,
+                    frameCount));
+            }
 
-            if (!IsSafeDimension(width, height)) throw new InvalidOperationException("비정상 크기 " + width + " * " + height);
-            if (width > ushort.MaxValue) throw new InvalidOperationException("정적 sprite frameWidth가 너무 큽니다: " + width);
+            int frameWidth = width / frameCount;
+            if (frameWidth <= 0 || frameWidth > ushort.MaxValue)
+            {
+                throw new InvalidOperationException(Localization.T(
+                    "error.frame_width_out_of_range",
+                    "The calculated frame width is outside the supported range: {0}px",
+                    frameWidth));
+            }
 
             long payloadSizeLong = (long)width * (long)height * 4L;
-            if (payloadSizeLong > int.MaxValue) throw new InvalidOperationException("RGBA 데이터가 너무 큽니다.");
+            if (payloadSizeLong > int.MaxValue)
+            {
+                throw new InvalidOperationException(Localization.T("error.rgba_too_large", "The PNG RGBA data is too large."));
+            }
 
             byte[] payload = ExtractRgbaPayload(source);
-            if (payload.Length != (int)payloadSizeLong) throw new InvalidOperationException("RGBA 데이터 크기가 맞지 않습니다.");
+            if (payload.Length != (int)payloadSizeLong)
+            {
+                throw new InvalidOperationException(Localization.T("error.rgba_size_mismatch", "The PNG RGBA data size does not match the calculated Sprite payload size."));
+            }
 
-            string dir = Path.GetDirectoryName(output) ?? string.Empty;
-            string temp = Path.Combine(dir, "__sprite_tmp_" + Guid.NewGuid().ToString("N") + ".sprite");
+            byte[] outputMagic = NormalizeMagic(magic);
+            string directory = Path.GetDirectoryName(output) ?? string.Empty;
+            string temp = Path.Combine(directory, "__sprite_tmp_" + Guid.NewGuid().ToString("N") + ".sprite");
 
             try
             {
-                using (FileStream fs = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+                using (FileStream fs = new FileStream(temp, FileMode.CreateNew, FileAccess.Write, FileShare.None))
                 using (BinaryWriter bw = new BinaryWriter(fs))
                 {
-                    bw.Write(new byte[] { (byte)'S', (byte)'p', (byte)'A', (byte)'1' });
+                    // Canonical v31 RGBA header. The template contributes only its frame
+                    // count and known magic variant; dimensions are rebuilt from the PNG.
+                    bw.Write(outputMagic);
                     bw.Write((ushort)31);
-                    bw.Write((ushort)width);      // frameWidth for static sprite
+                    bw.Write((ushort)frameWidth);
                     bw.Write((int)width);
                     bw.Write((int)height);
-                    bw.Write((int)0);             // unknown / cursor offset area, static item default
-                    bw.Write((int)1);             // frameCount
+                    bw.Write((int)0);
+                    bw.Write((int)frameCount);
                     bw.Write((int)0);
                     bw.Write((int)0);
-                    bw.Write((int)payload.Length);
-                    bw.Write((int)4);             // bytes per pixel
+                    bw.Write((int)0);
+                    bw.Write((int)0);
                     bw.Write(payload);
+                    bw.Flush();
+                    fs.Flush(true);
                 }
 
-                if (File.Exists(output)) File.Delete(output);
-                File.Move(temp, output);
+                ValidateWrittenSprite(temp, outputMagic, width, height, frameCount, frameWidth, payload.Length);
+                SafeFileCommit.Commit(temp, output);
             }
             finally
             {
@@ -7052,67 +7297,59 @@ namespace D2RSpriteToolkit
             }
         }
 
-        public static void SaveRgbaSpriteUsingTemplate(Bitmap source, string templateSpritePath, string output)
+        private static void ValidateWrittenSprite(string path, byte[] magic, int width, int height, int frameCount, int frameWidth, int payloadLength)
         {
-            if (source == null) throw new ArgumentNullException("source");
-            if (string.IsNullOrEmpty(templateSpritePath) || !File.Exists(templateSpritePath)) throw new InvalidOperationException("프레임 템플릿 sprite 파일을 찾을 수 없습니다.");
-
-            byte[] templateBytes = File.ReadAllBytes(templateSpritePath);
-            if (templateBytes.Length < HeaderSize) throw new InvalidOperationException("프레임 템플릿 sprite 헤더가 너무 짧습니다.");
-
-            int frameCount = BitConverter.ToInt32(templateBytes, 0x14);
-            int templateBytesPerPixel = BitConverter.ToInt32(templateBytes, 0x24);
-            int width = source.Width;
-            int height = source.Height;
-
-            if (frameCount <= 0) throw new InvalidOperationException("프레임 템플릿 sprite의 프레임 개수가 비정상입니다: " + frameCount);
-            if (templateBytesPerPixel != 4) throw new InvalidOperationException("현재는 RGBA/BPP 4 sprite 템플릿만 지원합니다.");
-            if (!IsSafeDimension(width, height)) throw new InvalidOperationException("PNG 크기가 비정상입니다: " + width + " * " + height);
-            if (width % frameCount != 0)
-            {
-                throw new InvalidOperationException("PNG 너비 " + width + "px를 템플릿의 " + frameCount + "개 프레임으로 균등하게 나눌 수 없습니다. PNG 너비를 프레임 개수의 배수로 조정하십시오.");
-            }
-
-            int frameWidth = width / frameCount;
-            if (frameWidth <= 0 || frameWidth > ushort.MaxValue)
-            {
-                throw new InvalidOperationException("계산된 프레임 너비가 지원 범위를 벗어났습니다: " + frameWidth + "px");
-            }
-
-            long payloadSizeLong = (long)width * (long)height * 4L;
-            if (payloadSizeLong > int.MaxValue) throw new InvalidOperationException("PNG RGBA 데이터가 너무 큽니다.");
-
-            byte[] payload = ExtractRgbaPayload(source);
-            if (payload.Length != (int)payloadSizeLong) throw new InvalidOperationException("PNG RGBA 데이터 크기가 계산된 sprite 페이로드 크기와 맞지 않습니다.");
-
             byte[] header = new byte[HeaderSize];
-            Buffer.BlockCopy(templateBytes, 0, header, 0, HeaderSize);
-
-            Buffer.BlockCopy(BitConverter.GetBytes((ushort)frameWidth), 0, header, 0x06, 2);
-            Buffer.BlockCopy(BitConverter.GetBytes(width), 0, header, 0x08, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(height), 0, header, 0x0C, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(frameCount), 0, header, 0x14, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(payload.Length), 0, header, 0x20, 4);
-            Buffer.BlockCopy(BitConverter.GetBytes(4), 0, header, 0x24, 4);
-
-            string dir = Path.GetDirectoryName(output) ?? string.Empty;
-            string temp = Path.Combine(dir, "__sprite_tmp_" + Guid.NewGuid().ToString("N") + ".sprite");
-
-            try
+            long expectedLength = HeaderSize + (long)payloadLength;
+            using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
             {
-                using (FileStream fs = new FileStream(temp, FileMode.Create, FileAccess.Write, FileShare.None))
+                if (fs.Length != expectedLength)
                 {
-                    fs.Write(header, 0, header.Length);
-                    fs.Write(payload, 0, payload.Length);
+                    throw new IOException(Localization.T("error.sprite_write_size", "The completed Sprite file has an unexpected size."));
                 }
+                int read = fs.Read(header, 0, header.Length);
+                if (read != header.Length)
+                {
+                    throw new IOException(Localization.T("error.sprite_write_header", "The completed Sprite header could not be verified."));
+                }
+            }
 
-                if (File.Exists(output)) File.Delete(output);
-                File.Move(temp, output);
-            }
-            finally
+            for (int i = 0; i < 4; i++)
             {
-                try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+                if (header[i] != magic[i]) throw new IOException(Localization.T("error.sprite_write_header", "The completed Sprite header could not be verified."));
             }
+            if (BitConverter.ToUInt16(header, 0x04) != 31
+                || BitConverter.ToUInt16(header, 0x06) != frameWidth
+                || BitConverter.ToInt32(header, 0x08) != width
+                || BitConverter.ToInt32(header, 0x0C) != height
+                || BitConverter.ToInt32(header, 0x14) != frameCount)
+            {
+                throw new IOException(Localization.T("error.sprite_write_header", "The completed Sprite header could not be verified."));
+            }
+        }
+
+        private static byte[] NormalizeMagic(byte[] magic)
+        {
+            if (IsKnownSpriteMagic(magic))
+            {
+                byte[] result = new byte[4];
+                Buffer.BlockCopy(magic, 0, result, 0, result.Length);
+                return result;
+            }
+
+            byte[] fallback = new byte[4];
+            Buffer.BlockCopy(DefaultMagic, 0, fallback, 0, fallback.Length);
+            return fallback;
+        }
+
+        private static bool IsKnownSpriteMagic(byte[] bytes)
+        {
+            return bytes != null
+                && bytes.Length >= 4
+                && bytes[0] == (byte)'S'
+                && (bytes[1] == (byte)'p' || bytes[1] == (byte)'P')
+                && (bytes[2] == (byte)'A' || bytes[2] == (byte)'a')
+                && bytes[3] == (byte)'1';
         }
 
         private static byte[] ExtractRgbaPayload(Bitmap source)
@@ -7361,10 +7598,8 @@ namespace D2RSpriteToolkit
         {
             if (bytes == null || bytes.Length < 4) return false;
 
-            // D2R sprite 계열에서 확인한 magic 변형:
-            // 일반: SpA1
-            // 일부 상태 아이콘/면역 아이콘: SPa1
-            // 둘 다 같은 0x28 헤더 + v31/v61 payload 구조를 사용한다.
+            // D2R sprite files may use either SPa1 or SpA1.
+            // Both variants use the same 0x28 header and v31/v61 payload structure.
             return bytes[0] == (byte)'S'
                 && (bytes[1] == (byte)'p' || bytes[1] == (byte)'P')
                 && (bytes[2] == (byte)'A' || bytes[2] == (byte)'a')

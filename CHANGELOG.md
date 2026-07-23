@@ -1,5 +1,19 @@
 # Changelog
 
+## 4.0.2 - Safe Frame-Template Rebuild
+
+- Removed the incorrect requirement that a frame-template Sprite must report BPP 4
+- Read same-name Sprite templates directly from disk instead of requiring them to be loaded in the file list
+- Treat an unreadable or invalid same-name Sprite as an error instead of silently overwriting it with a static Sprite
+- Use only the valid frame count and known magic variant from the template
+- Rebuild a canonical RGBA v31 header from the PNG instead of copying the template header or encoding
+- Support v31, v61, BPP 0, and malformed-dimension templates when their frame count is valid
+- Reject non-divisible PNG widths before modifying the destination
+- Verify the completed temporary Sprite before replacing the destination
+- Replace existing PNG and Sprite outputs through a backup-safe commit path instead of deleting them first
+- Updated frame-template status text and conversion guidance
+- Changed the default magic for newly created one-frame Sprites from `SpA1` to the vanilla-compatible `SPa1`; template-based conversions still preserve the template's known magic variant
+
 ## 4.0.1 - Frame Template Dimension Fix
 
 - Changed PNG-to-Sprite frame-template conversion to trust the template frame count instead of its incorrect total dimensions
