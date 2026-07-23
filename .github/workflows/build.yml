@@ -63,9 +63,36 @@ jobs:
             throw "Compilation failed with exit code $LASTEXITCODE."
           }
 
+          $testCompilerArguments = @(
+            '/nologo',
+            '/target:exe',
+            '/platform:anycpu',
+            '/optimize+',
+            '/codepage:65001',
+            '/main:D2RSpriteToolkit.CodecSmokeTests',
+            '/out:CodecSmokeTests.exe',
+            'Program.cs',
+            'tests\CodecSmokeTests.cs',
+            '/reference:System.dll',
+            '/reference:System.Core.dll',
+            '/reference:System.Drawing.dll',
+            '/reference:System.Windows.Forms.dll'
+          )
+
+          & $csc $testCompilerArguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "Regression-test compilation failed with exit code $LASTEXITCODE."
+          }
+
+          & .\CodecSmokeTests.exe
+          if ($LASTEXITCODE -ne 0) {
+            throw "PNG-to-Sprite regression tests failed with exit code $LASTEXITCODE."
+          }
+          Remove-Item -LiteralPath 'CodecSmokeTests.exe' -Force
+
           $releaseRoot = Join-Path $PWD 'release'
-          $stageDirectory = Join-Path $releaseRoot 'D2RSpriteToolkit_v4.0.1'
-          $zipPath = Join-Path $releaseRoot 'D2RSpriteToolkit_v4.0.1_Windows.zip'
+          $stageDirectory = Join-Path $releaseRoot 'D2RSpriteToolkit_v4.0.2'
+          $zipPath = Join-Path $releaseRoot 'D2RSpriteToolkit_v4.0.2_Windows.zip'
 
           Remove-Item -LiteralPath $releaseRoot -Recurse -Force -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Path $stageDirectory -Force | Out-Null
@@ -73,7 +100,7 @@ jobs:
           Copy-Item -LiteralPath 'D2RSpriteTK.exe' -Destination $stageDirectory
           Copy-Item -LiteralPath 'LICENSE' -Destination $stageDirectory
           Copy-Item -LiteralPath 'NOTICE.md' -Destination $stageDirectory
-          Copy-Item -LiteralPath 'RELEASE_NOTES_v4.0.1.md' -Destination $stageDirectory
+          Copy-Item -LiteralPath 'RELEASE_NOTES_v4.0.2.md' -Destination $stageDirectory
 
           Compress-Archive `
             -Path (Join-Path $stageDirectory '*') `
@@ -87,7 +114,7 @@ jobs:
       - name: Upload Windows package
         uses: actions/upload-artifact@v7
         with:
-          path: release/D2RSpriteToolkit_v4.0.1_Windows.zip
+          path: release/D2RSpriteToolkit_v4.0.2_Windows.zip
           archive: false
           if-no-files-found: error
           retention-days: 30
