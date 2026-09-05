@@ -5,6 +5,7 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
+using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Reflection;
 using System.Text;
@@ -184,6 +185,221 @@ namespace D2RSpriteToolkit
                 return false;
             }
         }
+    }
+
+    internal static class StraightRgbaPngCodec
+    {
+        private static readonly byte[] PngSignature = new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 };
+
+        public static bool TryLoadRgba8(string path, out Bitmap bitmap)
+        {
+            bitmap = null;
+            try
+            {
+                byte[] file = File.ReadAllBytes(path);
+                if (file.Length < 33) return false;
+                for (int i = 0; i < PngSignature.Length; i++) if (file[i] != PngSignature[i]) return false;
+
+                int pos = 8, width = 0, height = 0;
+                bool seenIhdr = false;
+                MemoryStream idat = new MemoryStream();
+                while (pos + 12 <= file.Length)
+                {
+                    int length = ReadInt32BE(file, pos); pos += 4;
+                    if (length < 0 || pos + 4 + length + 4 > file.Length) return false;
+                    string type = Encoding.ASCII.GetString(file, pos, 4); pos += 4;
+                    if (type == "IHDR")
+                    {
+                        if (length != 13) return false;
+                        width = ReadInt32BE(file, pos); height = ReadInt32BE(file, pos + 4);
+                        if (width <= 0 || height <= 0 || file[pos + 8] != 8 || file[pos + 9] != 6 || file[pos + 10] != 0 || file[pos + 11] != 0 || file[pos + 12] != 0) return false;
+                        seenIhdr = true;
+                    }
+                    else if (type == "IDAT")
+                    {
+                        if (!seenIhdr) return false;
+                        idat.Write(file, pos, length);
+                    }
+                    else if (type == "IEND") break;
+                    pos += length + 4;
+                }
+                if (!seenIhdr || idat.Length < 6) return false;
+
+                byte[] zlib = idat.ToArray();
+                if ((zlib[0] & 0x0F) != 8 || ((((int)zlib[0] << 8) + zlib[1]) % 31) != 0 || (zlib[1] & 0x20) != 0) return false;
+                int rowBytes = checked(width * 4);
+                byte[] scan = new byte[checked(height * (rowBytes + 1))];
+                using (MemoryStream rawDeflate = new MemoryStream(zlib, 2, zlib.Length - 6, false))
+                using (DeflateStream inflater = new DeflateStream(rawDeflate, CompressionMode.Decompress))
+                {
+                    int offset = 0;
+                    while (offset < scan.Length)
+                    {
+                        int read = inflater.Read(scan, offset, scan.Length - offset);
+                        if (read <= 0) break;
+                        offset += read;
+                    }
+                    if (offset != scan.Length) return false;
+                }
+
+                byte[] rgba = new byte[checked(width * height * 4)];
+                byte[] prev = new byte[rowBytes];
+                byte[] cur = new byte[rowBytes];
+                int src = 0, dst = 0;
+                for (int y = 0; y < height; y++)
+                {
+                    int filter = scan[src++];
+                    Buffer.BlockCopy(scan, src, cur, 0, rowBytes); src += rowBytes;
+                    Unfilter(cur, prev, filter, 4);
+                    Buffer.BlockCopy(cur, 0, rgba, dst, rowBytes); dst += rowBytes;
+                    byte[] t = prev; prev = cur; cur = t;
+                }
+                bitmap = CreateBitmap(width, height, rgba);
+                return true;
+            }
+            catch
+            {
+                if (bitmap != null) { bitmap.Dispose(); bitmap = null; }
+                return false;
+            }
+        }
+
+        public static void SaveRgba8(Bitmap bitmap, string path)
+        {
+            if (bitmap == null) throw new ArgumentNullException("bitmap");
+            if (bitmap.PixelFormat != PixelFormat.Format32bppArgb) throw new InvalidOperationException("Straight RGBA PNG save requires Format32bppArgb.");
+            byte[] rgba = ExtractRgba(bitmap);
+            int rowBytes = checked(bitmap.Width * 4);
+            byte[] scan = new byte[checked(bitmap.Height * (rowBytes + 1))];
+            int s = 0, d = 0;
+            for (int y = 0; y < bitmap.Height; y++)
+            {
+                scan[d++] = 0;
+                Buffer.BlockCopy(rgba, s, scan, d, rowBytes); s += rowBytes; d += rowBytes;
+            }
+
+            byte[] deflate;
+            using (MemoryStream ms = new MemoryStream())
+            {
+                using (DeflateStream compressor = new DeflateStream(ms, CompressionMode.Compress, true)) compressor.Write(scan, 0, scan.Length);
+                deflate = ms.ToArray();
+            }
+            byte[] zlib = new byte[deflate.Length + 6];
+            zlib[0] = 0x78; zlib[1] = 0x9C;
+            Buffer.BlockCopy(deflate, 0, zlib, 2, deflate.Length);
+            WriteUInt32BE(zlib, zlib.Length - 4, Adler32(scan));
+
+            using (FileStream fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None))
+            {
+                fs.Write(PngSignature, 0, PngSignature.Length);
+                byte[] ihdr = new byte[13];
+                WriteInt32BE(ihdr, 0, bitmap.Width); WriteInt32BE(ihdr, 4, bitmap.Height);
+                ihdr[8] = 8; ihdr[9] = 6;
+                WriteChunk(fs, "IHDR", ihdr);
+                WriteChunk(fs, "IDAT", zlib);
+                WriteChunk(fs, "IEND", new byte[0]);
+            }
+        }
+
+        private static byte[] ExtractRgba(Bitmap bitmap)
+        {
+            Rectangle rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+            BitmapData data = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                int rowBytes = bitmap.Width * 4;
+                byte[] rgba = new byte[rowBytes * bitmap.Height];
+                byte[] row = new byte[rowBytes];
+                for (int y = 0; y < bitmap.Height; y++)
+                {
+                    Marshal.Copy(new IntPtr(data.Scan0.ToInt64() + (long)y * data.Stride), row, 0, rowBytes);
+                    for (int x = 0; x < bitmap.Width; x++)
+                    {
+                        int i = x * 4, o = y * rowBytes + i;
+                        rgba[o] = row[i + 2]; rgba[o + 1] = row[i + 1]; rgba[o + 2] = row[i]; rgba[o + 3] = row[i + 3];
+                    }
+                }
+                return rgba;
+            }
+            finally { bitmap.UnlockBits(data); }
+        }
+
+        private static Bitmap CreateBitmap(int width, int height, byte[] rgba)
+        {
+            Bitmap bitmap = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+            Rectangle rect = new Rectangle(0, 0, width, height);
+            BitmapData data = bitmap.LockBits(rect, ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+            try
+            {
+                int rowBytes = width * 4;
+                byte[] row = new byte[rowBytes];
+                for (int y = 0; y < height; y++)
+                {
+                    for (int x = 0; x < width; x++)
+                    {
+                        int i = y * rowBytes + x * 4, o = x * 4;
+                        row[o] = rgba[i + 2]; row[o + 1] = rgba[i + 1]; row[o + 2] = rgba[i]; row[o + 3] = rgba[i + 3];
+                    }
+                    Marshal.Copy(row, 0, new IntPtr(data.Scan0.ToInt64() + (long)y * data.Stride), rowBytes);
+                }
+            }
+            finally { bitmap.UnlockBits(data); }
+            return bitmap;
+        }
+
+        private static void Unfilter(byte[] cur, byte[] prev, int type, int bpp)
+        {
+            if (type == 0) return;
+            for (int i = 0; i < cur.Length; i++)
+            {
+                int left = i >= bpp ? cur[i - bpp] : 0, up = prev[i], ul = i >= bpp ? prev[i - bpp] : 0, value;
+                switch (type)
+                {
+                    case 1: value = cur[i] + left; break;
+                    case 2: value = cur[i] + up; break;
+                    case 3: value = cur[i] + ((left + up) >> 1); break;
+                    case 4: value = cur[i] + Paeth(left, up, ul); break;
+                    default: throw new InvalidDataException("Unsupported PNG filter.");
+                }
+                cur[i] = (byte)(value & 255);
+            }
+        }
+
+        private static int Paeth(int a, int b, int c)
+        {
+            int p = a + b - c, pa = Math.Abs(p - a), pb = Math.Abs(p - b), pc = Math.Abs(p - c);
+            if (pa <= pb && pa <= pc) return a;
+            return pb <= pc ? b : c;
+        }
+
+        private static void WriteChunk(Stream stream, string type, byte[] data)
+        {
+            byte[] typeBytes = Encoding.ASCII.GetBytes(type), len = new byte[4];
+            WriteInt32BE(len, 0, data.Length); stream.Write(len, 0, 4); stream.Write(typeBytes, 0, 4); if (data.Length > 0) stream.Write(data, 0, data.Length);
+            uint crc = 0xFFFFFFFFu;
+            for (int i = 0; i < typeBytes.Length; i++) crc = CrcStep(crc, typeBytes[i]);
+            for (int i = 0; i < data.Length; i++) crc = CrcStep(crc, data[i]);
+            crc ^= 0xFFFFFFFFu;
+            byte[] c = new byte[4]; WriteUInt32BE(c, 0, crc); stream.Write(c, 0, 4);
+        }
+
+        private static uint CrcStep(uint crc, byte value)
+        {
+            crc ^= value;
+            for (int i = 0; i < 8; i++) crc = (crc & 1) != 0 ? 0xEDB88320u ^ (crc >> 1) : crc >> 1;
+            return crc;
+        }
+
+        private static uint Adler32(byte[] data)
+        {
+            const uint M = 65521u; uint a = 1, b = 0;
+            for (int i = 0; i < data.Length; i++) { a = (a + data[i]) % M; b = (b + a) % M; }
+            return (b << 16) | a;
+        }
+
+        private static int ReadInt32BE(byte[] b, int o) { return (b[o] << 24) | (b[o + 1] << 16) | (b[o + 2] << 8) | b[o + 3]; }
+        private static void WriteInt32BE(byte[] b, int o, int v) { b[o] = (byte)(v >> 24); b[o + 1] = (byte)(v >> 16); b[o + 2] = (byte)(v >> 8); b[o + 3] = (byte)v; }
+        private static void WriteUInt32BE(byte[] b, int o, uint v) { b[o] = (byte)(v >> 24); b[o + 1] = (byte)(v >> 16); b[o + 2] = (byte)(v >> 8); b[o + 3] = (byte)v; }
     }
 
     internal static class Program
@@ -2381,7 +2597,7 @@ namespace D2RSpriteToolkit
                         if (!IsTargetPng(input) && !IsLowendPngFile(input)) continue;
 
                         string spriteOutput;
-                        using (Bitmap src = LoadSourceBitmap(input))
+                        using (Bitmap src = LoadSpriteSourceBitmap(input))
                         {
                             spriteOutput = GetPngToSpriteOutputPath(input);
                             EnsureOutputDirectory(spriteOutput);
@@ -2650,6 +2866,38 @@ namespace D2RSpriteToolkit
             }
         }
 
+        private static Bitmap LoadSpriteSourceBitmap(string path)
+        {
+            // Exact path for the common RGBA8/non-interlaced PNG case.
+            // This bypasses GDI+ entirely so straight-alpha RGB values are not
+            // premultiplied/unpremultiplied and rounded before Sprite encoding.
+            Bitmap exact;
+            if (StraightRgbaPngCodec.TryLoadRgba8(path, out exact)) return exact;
+
+            // Compatibility fallback for uncommon PNG encodings and other image formats.
+            // These retain the legacy GDI+ behavior instead of rejecting the file.
+            Bitmap raw = ImageFileUtil.LoadBitmapNoLock(path);
+            if (raw.PixelFormat == PixelFormat.Format32bppArgb) return raw;
+
+            Bitmap straight = new Bitmap(raw.Width, raw.Height, PixelFormat.Format32bppArgb);
+            try
+            {
+                for (int y = 0; y < raw.Height; y++)
+                {
+                    for (int x = 0; x < raw.Width; x++) straight.SetPixel(x, y, raw.GetPixel(x, y));
+                }
+            }
+            catch
+            {
+                straight.Dispose();
+                raw.Dispose();
+                throw;
+            }
+
+            raw.Dispose();
+            return straight;
+        }
+
         private static Bitmap ResizeTransparent(Bitmap source, int width, int height)
         {
             Bitmap dst = new Bitmap(width, height, PixelFormat.Format32bppPArgb);
@@ -2676,13 +2924,24 @@ namespace D2RSpriteToolkit
 
             try
             {
-                using (Bitmap final = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format32bppArgb))
-                using (Graphics g = Graphics.FromImage(final))
+                if (bitmap.PixelFormat == PixelFormat.Format32bppArgb)
                 {
-                    g.Clear(Color.Transparent);
-                    g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
-                    g.DrawImage(bitmap, 0, 0, bitmap.Width, bitmap.Height);
-                    final.Save(temp, ImageFormat.Png);
+                    // Sprite decode already produces straight ARGB. Use the managed RGBA8 PNG
+                    // writer instead of GDI+, whose PNG encoder can round semi-transparent RGB.
+                    StraightRgbaPngCodec.SaveRgba8(bitmap, temp);
+                }
+                else
+                {
+                    // Lowend resize intentionally uses premultiplied alpha to prevent hidden
+                    // transparent RGB from bleeding into visible edges during interpolation.
+                    using (Bitmap final = new Bitmap(bitmap.Width, bitmap.Height, PixelFormat.Format32bppArgb))
+                    using (Graphics g = Graphics.FromImage(final))
+                    {
+                        g.Clear(Color.Transparent);
+                        g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                        g.DrawImage(bitmap, 0, 0, bitmap.Width, bitmap.Height);
+                        final.Save(temp, ImageFormat.Png);
+                    }
                 }
 
                 SafeFileCommit.Commit(temp, output);
@@ -7412,13 +7671,24 @@ namespace D2RSpriteToolkit
 
         private static byte[] ExtractRgbaPayload(Bitmap source)
         {
-            using (Bitmap argb = new Bitmap(source.Width, source.Height, PixelFormat.Format32bppArgb))
+            if (source == null) throw new ArgumentNullException("source");
+
+            Bitmap converted = null;
+            Bitmap argb = source;
+            try
             {
-                using (Graphics g = Graphics.FromImage(argb))
+                if (source.PixelFormat != PixelFormat.Format32bppArgb)
                 {
-                    g.Clear(Color.Transparent);
-                    g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
-                    g.DrawImage(source, 0, 0, source.Width, source.Height);
+                    // Fallback for uncommon input formats. Normal PNG -> Sprite loading uses
+                    // straight Format32bppArgb and therefore bypasses this conversion entirely.
+                    converted = new Bitmap(source.Width, source.Height, PixelFormat.Format32bppArgb);
+                    using (Graphics g = Graphics.FromImage(converted))
+                    {
+                        g.Clear(Color.Transparent);
+                        g.CompositingMode = System.Drawing.Drawing2D.CompositingMode.SourceCopy;
+                        g.DrawImageUnscaled(source, 0, 0);
+                    }
+                    argb = converted;
                 }
 
                 Rectangle rect = new Rectangle(0, 0, argb.Width, argb.Height);
@@ -7458,6 +7728,10 @@ namespace D2RSpriteToolkit
                 {
                     argb.UnlockBits(data);
                 }
+            }
+            finally
+            {
+                if (converted != null) converted.Dispose();
             }
         }
 

@@ -2,6 +2,9 @@
 
 ## 4.0.3 - File List Visibility Filters
 
+- Preserved straight-alpha RGB values during PNG -> Sprite conversion to avoid semi-transparent color rounding loss
+- Preserved straight-alpha Sprite -> PNG output without an unnecessary Graphics redraw
+- Kept premultiplied-alpha processing only for lowend resizing, where it prevents transparent-edge white/color bleed
 - Changed `.lowend.png`, `.sprite`, and `.lowend.sprite` controls into independent file-list visibility filters
 - Removed the dependency that required `.sprite` visibility before `.lowend.sprite` could be shown
 - Keep loaded files in the internal list when a visibility filter is turned off, allowing them to reappear immediately when re-enabled

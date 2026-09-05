@@ -6,6 +6,9 @@ Version 4.0.3 makes the three generated-file controls behave as direct, independ
 
 ## Changes
 
+- PNG -> Sprite now preserves straight-alpha RGB values instead of routing source pixels through premultiplied alpha first.
+- Sprite -> PNG saves straight ARGB output directly, avoiding an extra render pass that could round semi-transparent colors.
+- Lowend resizing continues to use premultiplied alpha so hidden transparent RGB does not bleed into visible shadow/edge pixels.
 - `.lowend.png`, `.sprite`, and `.lowend.sprite` visibility can now be toggled independently.
 - Turning a filter off hides matching entries without removing them from the loaded file set.
 - Turning the filter back on immediately restores the hidden entries.
