@@ -1,5 +1,14 @@
 # Changelog
 
+## 4.0.3 - File List Visibility Filters
+
+- Changed `.lowend.png`, `.sprite`, and `.lowend.sprite` controls into independent file-list visibility filters
+- Removed the dependency that required `.sprite` visibility before `.lowend.sprite` could be shown
+- Keep loaded files in the internal list when a visibility filter is turned off, allowing them to reappear immediately when re-enabled
+- Automatically enable the matching visibility filter when a conversion creates a new output file
+- Immediately reveal newly generated `.lowend.png`, `.sprite`, and `.lowend.sprite` files after conversion
+- Register generated files saved in `output_png` or `output_sprite` directly in the current file list
+
 ## 4.0.2 - Safe Frame-Template Rebuild
 
 - Removed the incorrect requirement that a frame-template Sprite must report BPP 4

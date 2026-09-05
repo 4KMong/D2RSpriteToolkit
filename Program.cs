@@ -16,8 +16,8 @@ using Microsoft.Win32;
 [assembly: AssemblyProduct("D2R Sprite Toolkit")]
 [assembly: AssemblyDescription("PNG and Sprite conversion toolkit for Diablo II: Resurrected modding")]
 [assembly: AssemblyCopyright("Copyright © 2026 D2R Sprite Toolkit contributors")]
-[assembly: AssemblyVersion("4.0.2.0")]
-[assembly: AssemblyFileVersion("4.0.2.0")]
+[assembly: AssemblyVersion("4.0.3.0")]
+[assembly: AssemblyFileVersion("4.0.3.0")]
 
 namespace D2RSpriteToolkit
 {
@@ -542,7 +542,7 @@ namespace D2RSpriteToolkit
     internal sealed class MainForm : Form
     {
         private const string RegistryPath = @"Software\D2RSpriteToolkit";
-        private const string AppVersion = "4.0.2";
+        private const string AppVersion = "4.0.3";
 
         private const string InvenLinkUrl = "https://www.inven.co.kr/board/diablo2/5842/7796";
         private const string NexusLinkUrl = "https://www.nexusmods.com/diablo2resurrected/mods/1144";
@@ -754,7 +754,7 @@ namespace D2RSpriteToolkit
             btnSelectNone = new Button { Text = T("button.select_none", "Select none"), Tag = "lng:button.select_none|Select none", Left = 268, Top = 508, Width = 128, Height = 30, Anchor = AnchorStyles.Bottom | AnchorStyles.Left };
             chkIncludeLowendPngInList = new CenteredCheckBox { Text = T("check.show_lowend_png", "Show .lowend.png"), Tag = "lng:check.show_lowend_png|Show .lowend.png", Left = 636, Top = 506, Width = 192, Height = 22, Anchor = AnchorStyles.Bottom | AnchorStyles.Right, TextAlign = ContentAlignment.MiddleLeft, Checked = true };
             chkIncludeSpritesInList = new CenteredCheckBox { Text = T("check.show_sprite", "Show .sprite"), Tag = "lng:check.show_sprite|Show .sprite", Left = 636, Top = 530, Width = 192, Height = 22, Anchor = AnchorStyles.Bottom | AnchorStyles.Right, TextAlign = ContentAlignment.MiddleLeft, Checked = false };
-            chkIncludeLowendSpritesInList = new CenteredCheckBox { Text = T("check.show_lowend_sprite", "Show .lowend.sprite"), Tag = "lng:check.show_lowend_sprite|Show .lowend.sprite", Left = 636, Top = 554, Width = 192, Height = 22, Anchor = AnchorStyles.Bottom | AnchorStyles.Right, TextAlign = ContentAlignment.MiddleLeft, Checked = false, Enabled = false };
+            chkIncludeLowendSpritesInList = new CenteredCheckBox { Text = T("check.show_lowend_sprite", "Show .lowend.sprite"), Tag = "lng:check.show_lowend_sprite|Show .lowend.sprite", Left = 636, Top = 554, Width = 192, Height = 22, Anchor = AnchorStyles.Bottom | AnchorStyles.Right, TextAlign = ContentAlignment.MiddleLeft, Checked = false, Enabled = true };
 
             lblStatus = new Label { Left = 0, Top = 554, Width = 628, Height = 22, Anchor = AnchorStyles.Bottom | AnchorStyles.Left, Text = T("status.ready", "Ready"), Tag = "lng:status.ready|Ready", ForeColor = Color.ForestGreen, TextAlign = ContentAlignment.MiddleLeft };
             btnConvert = new ColoredKeywordButton { Text = T("button.convert", "PNG → lowend\r\n\r\n(50% resize)"), Tag = "lng:button.convert|PNG → lowend\r\n\r\n(50% resize)", Left = 16, Top = 846, Width = 262, Height = 64, Anchor = AnchorStyles.Bottom | AnchorStyles.Left, TextAlign = ContentAlignment.MiddleCenter };
@@ -1511,25 +1511,9 @@ namespace D2RSpriteToolkit
 
             btnSelectAll.Click += delegate { SelectAllEntries(); };
             btnSelectNone.Click += delegate { SelectNoneEntries(); };
-            chkIncludeLowendPngInList.CheckedChanged += delegate
-            {
-                if (loadingSettings) return;
-                SaveSettings();
-                RefreshFileList();
-            };
-            chkIncludeSpritesInList.CheckedChanged += delegate
-            {
-                ApplyOptionState();
-                if (loadingSettings) return;
-                SaveSettings();
-                RefreshFileList();
-            };
-            chkIncludeLowendSpritesInList.CheckedChanged += delegate
-            {
-                if (loadingSettings) return;
-                SaveSettings();
-                RefreshFileList();
-            };
+            chkIncludeLowendPngInList.CheckedChanged += delegate { ApplyListVisibilityFilter(); };
+            chkIncludeSpritesInList.CheckedChanged += delegate { ApplyListVisibilityFilter(); };
+            chkIncludeLowendSpritesInList.CheckedChanged += delegate { ApplyListVisibilityFilter(); };
             btnPrefix.Click += delegate { ApplyPrefixToSelected(); };
             btnSuffix.Click += delegate { ApplySuffixToSelected(); };
             btnReplace.Click += delegate { ApplyReplaceToSelected(); };
@@ -1547,6 +1531,15 @@ namespace D2RSpriteToolkit
 
         }
 
+        private void ApplyListVisibilityFilter()
+        {
+            if (loadingSettings) return;
+            SaveSettings();
+            RebuildListView(true);
+            SelectFirstItemIfNothingSelected();
+            UpdatePreview();
+        }
+
         private void ApplyOptionState()
         {
             bool force = chkForceSize.Checked;
@@ -1554,15 +1547,7 @@ namespace D2RSpriteToolkit
             numForceHeight.Enabled = force;
 
             txtCustomSuffix.Enabled = chkCustomSuffix.Checked;
-            bool includeSprites = chkIncludeSpritesInList.Checked;
-            if (!includeSprites && chkIncludeLowendSpritesInList.Checked)
-            {
-                bool oldLoading = loadingSettings;
-                loadingSettings = true;
-                chkIncludeLowendSpritesInList.Checked = false;
-                loadingSettings = oldLoading;
-            }
-            chkIncludeLowendSpritesInList.Enabled = includeSprites;
+            chkIncludeLowendSpritesInList.Enabled = true;
             LayoutListFooterControls();
         }
 
@@ -1796,7 +1781,7 @@ namespace D2RSpriteToolkit
                 else if (IsLowendPngFile(file))
                 {
                     AddEntry(file);
-                    if (chkIncludeSpritesInList.Checked && chkIncludeLowendSpritesInList.Checked) AddMatchingLowendSpriteFileDirect(file);
+                    if (loadMatchingSprites && includeLowendSprites) AddMatchingLowendSpriteFileDirect(file);
                 }
             }
             return fileSet.Count - before;
@@ -1812,11 +1797,11 @@ namespace D2RSpriteToolkit
             }
             else if (IsLowendPngFile(path))
             {
-                if (ShouldShowLowendPngPath(path)) AddEntry(path);
+                AddEntry(path);
             }
             else if (IsSpriteFile(path))
             {
-                if (ShouldShowSpritePath(path)) AddEntry(path);
+                AddEntry(path);
             }
         }
 
@@ -1834,7 +1819,7 @@ namespace D2RSpriteToolkit
             else if (IsLowendPngFile(path))
             {
                 AddEntry(path);
-                if (includeRelatedForTargetPng && chkIncludeSpritesInList.Checked && chkIncludeLowendSpritesInList.Checked) AddMatchingLowendSpriteFileDirect(path);
+                if (includeRelatedForTargetPng && loadMatchingSprites && includeLowendSprites) AddMatchingLowendSpriteFileDirect(path);
             }
             else if (IsSpriteFile(path))
             {
@@ -1879,10 +1864,9 @@ namespace D2RSpriteToolkit
         {
             if (!loadMatchingSprites) return;
 
-            bool includeLowendForCurrentView = includeLowendSprites && chkIncludeSpritesInList.Checked && chkIncludeLowendSpritesInList.Checked;
-            foreach (string spritePath in GetMatchingSpritePathsForPng(pngPath, includeLowendForCurrentView))
+            foreach (string spritePath in GetMatchingSpritePathsForPng(pngPath, includeLowendSprites))
             {
-                if (IsSpriteFile(spritePath) && ShouldShowSpritePath(spritePath)) AddEntry(spritePath, true);
+                if (IsSpriteFile(spritePath)) AddEntry(spritePath, true);
             }
         }
 
@@ -1896,7 +1880,6 @@ namespace D2RSpriteToolkit
 
         private void AddMatchingLowendPngFile(string pngPath)
         {
-            if (chkIncludeLowendPngInList == null || !chkIncludeLowendPngInList.Checked) return;
             string lowendPath = GetMatchingLowendPngPath(pngPath);
             if (IsLowendPngFile(lowendPath)) AddEntry(lowendPath, true);
         }
@@ -1930,8 +1913,16 @@ namespace D2RSpriteToolkit
         private bool ShouldShowSpritePath(string spritePath)
         {
             if (!IsSpriteFile(spritePath)) return true;
-            if (IsLowendSpriteFile(spritePath)) return chkIncludeSpritesInList.Checked && chkIncludeLowendSpritesInList.Checked;
-            return chkIncludeSpritesInList.Checked;
+            if (IsLowendSpriteFile(spritePath)) return chkIncludeLowendSpritesInList != null && chkIncludeLowendSpritesInList.Checked;
+            return chkIncludeSpritesInList != null && chkIncludeSpritesInList.Checked;
+        }
+
+        private bool ShouldDisplayEntry(FileEntry entry)
+        {
+            if (entry == null) return false;
+            if (IsLowendPngEntry(entry)) return ShouldShowLowendPngPath(entry.FullPath);
+            if (IsSpriteEntry(entry)) return ShouldShowSpritePath(entry.FullPath);
+            return true;
         }
 
         private IEnumerable<string> EnumeratePngFiles(string folder, bool recursive)
@@ -2123,6 +2114,55 @@ namespace D2RSpriteToolkit
             return baseName + GetManagedFileSuffix(referenceFileName);
         }
 
+        private void RevealGeneratedOutputs(IEnumerable<string> outputPaths)
+        {
+            if (outputPaths == null) return;
+
+            bool filterChanged = false;
+            bool oldLoading = loadingSettings;
+            loadingSettings = true;
+            try
+            {
+                foreach (string path in outputPaths)
+                {
+                    if (string.IsNullOrWhiteSpace(path) || !File.Exists(path)) continue;
+
+                    if (IsLowendPngFile(path))
+                    {
+                        if (!chkIncludeLowendPngInList.Checked)
+                        {
+                            chkIncludeLowendPngInList.Checked = true;
+                            filterChanged = true;
+                        }
+                    }
+                    else if (IsLowendSpriteFile(path))
+                    {
+                        if (!chkIncludeLowendSpritesInList.Checked)
+                        {
+                            chkIncludeLowendSpritesInList.Checked = true;
+                            filterChanged = true;
+                        }
+                    }
+                    else if (IsSpriteFile(path))
+                    {
+                        if (!chkIncludeSpritesInList.Checked)
+                        {
+                            chkIncludeSpritesInList.Checked = true;
+                            filterChanged = true;
+                        }
+                    }
+
+                    AddEntry(path);
+                }
+            }
+            finally
+            {
+                loadingSettings = oldLoading;
+            }
+
+            if (filterChanged) SaveSettings();
+        }
+
         private void ConvertFiles()
         {
             List<FileEntry> work = GetConvertibleEntries();
@@ -2153,6 +2193,7 @@ namespace D2RSpriteToolkit
             int ok = 0;
             int fail = 0;
             List<string> errors = new List<string>();
+            List<string> generatedOutputs = new List<string>();
 
             btnConvert.Enabled = false;
             Cursor = Cursors.WaitCursor;
@@ -2167,15 +2208,17 @@ namespace D2RSpriteToolkit
                     {
                         if (!IsTargetPng(input)) continue;
 
+                        string output;
                         using (Bitmap src = LoadSourceBitmap(input))
                         {
                             Size target = CalculateTargetSize(input, src.Width, src.Height);
                             using (Bitmap resized = ResizeTransparent(src, target.Width, target.Height))
                             {
-                                string output = GetOutputPath(input);
+                                output = GetOutputPath(input);
                                 SavePngSafely(resized, output);
                             }
                         }
+                        generatedOutputs.Add(output);
                         entry.ConversionResult = BuildConversionResultText(true, "PNG → lowend", null);
                         entry.ConversionSucceeded = true;
                         ok++;
@@ -2198,6 +2241,7 @@ namespace D2RSpriteToolkit
                 btnConvert.Enabled = true;
             }
 
+            RevealGeneratedOutputs(generatedOutputs);
             RefreshFileList();
             SetStatus("완료: 성공 " + ok + "개, 실패 " + fail + "개", fail > 0 ? StatusKind.Error : StatusKind.Normal);
 
@@ -2235,6 +2279,7 @@ namespace D2RSpriteToolkit
             int ok = 0;
             int fail = 0;
             List<string> errors = new List<string>();
+            List<string> generatedOutputs = new List<string>();
 
             btnSpriteToPng.Enabled = false;
             Cursor = Cursors.WaitCursor;
@@ -2257,12 +2302,14 @@ namespace D2RSpriteToolkit
                             throw new InvalidOperationException(error);
                         }
 
+                        string output;
                         using (decoded)
                         {
-                            string output = GetSpriteToPngOutputPath(input);
+                            output = GetSpriteToPngOutputPath(input);
                             EnsureOutputDirectory(output);
                             SavePngSafely(decoded, output);
                         }
+                        generatedOutputs.Add(output);
                         entry.ConversionResult = BuildConversionResultText(true, "sprite → PNG", null);
                         entry.ConversionSucceeded = true;
                         ok++;
@@ -2285,6 +2332,7 @@ namespace D2RSpriteToolkit
                 btnSpriteToPng.Enabled = true;
             }
 
+            RevealGeneratedOutputs(generatedOutputs);
             RefreshFileList();
             SetStatus("sprite → PNG 완료: 성공 " + ok + "개, 실패 " + fail + "개", fail > 0 ? StatusKind.Error : StatusKind.Normal);
 
@@ -2317,6 +2365,7 @@ namespace D2RSpriteToolkit
             int ok = 0;
             int fail = 0;
             List<string> errors = new List<string>();
+            List<string> generatedOutputs = new List<string>();
 
             btnPngToSprite.Enabled = false;
             Cursor = Cursors.WaitCursor;
@@ -2331,9 +2380,10 @@ namespace D2RSpriteToolkit
                     {
                         if (!IsTargetPng(input) && !IsLowendPngFile(input)) continue;
 
+                        string spriteOutput;
                         using (Bitmap src = LoadSourceBitmap(input))
                         {
-                            string spriteOutput = GetPngToSpriteOutputPath(input);
+                            spriteOutput = GetPngToSpriteOutputPath(input);
                             EnsureOutputDirectory(spriteOutput);
 
                             D2RSpriteInfo templateInfo;
@@ -2353,6 +2403,7 @@ namespace D2RSpriteToolkit
                                 D2RSpriteCodec.SaveStaticRgbaSprite(src, spriteOutput);
                             }
                         }
+                        generatedOutputs.Add(spriteOutput);
                         entry.ConversionResult = BuildConversionResultText(true, "PNG → sprite", null);
                         entry.ConversionSucceeded = true;
                         ok++;
@@ -2375,6 +2426,7 @@ namespace D2RSpriteToolkit
                 btnPngToSprite.Enabled = true;
             }
 
+            RevealGeneratedOutputs(generatedOutputs);
             RefreshFileList();
             SetStatus("PNG → sprite 완료: 성공 " + ok + "개, 실패 " + fail + "개", fail > 0 ? StatusKind.Error : StatusKind.Normal);
 
@@ -3316,6 +3368,7 @@ namespace D2RSpriteToolkit
             for (int i = 0; i < sorted.Count; i++)
             {
                 FileEntry entry = sorted[i];
+                if (!ShouldDisplayEntry(entry)) continue;
                 ListViewItem item = null;
                 for (int c = 0; c < visible.Count; c++)
                 {
@@ -3378,7 +3431,13 @@ namespace D2RSpriteToolkit
 
         private List<FileEntry> GetVisualOrderedEntries()
         {
-            return GetSortedEntries();
+            List<FileEntry> visible = new List<FileEntry>();
+            List<FileEntry> sorted = GetSortedEntries();
+            for (int i = 0; i < sorted.Count; i++)
+            {
+                if (ShouldDisplayEntry(sorted[i])) visible.Add(sorted[i]);
+            }
+            return visible;
         }
 
         private List<FileEntry> GetConvertibleEntries()
@@ -4256,7 +4315,6 @@ namespace D2RSpriteToolkit
 
             RefreshAllMetadata();
 
-            int referenceRemoved = RemoveNonIncludedReferenceEntries();
             int before = fileSet.Count;
             List<FileEntry> snapshot = new List<FileEntry>(entries);
             for (int i = 0; i < snapshot.Count; i++)
@@ -4276,7 +4334,7 @@ namespace D2RSpriteToolkit
                 listFiles.SelectedItems.Clear();
                 if (listFiles.FocusedItem != null) listFiles.FocusedItem.Focused = false;
             }
-            SetStatus("목록 새로고침: 사라진 파일 " + missingRemoved + "개 제거, 미표시 참조파일 " + referenceRemoved + "개 제거, " + referenceAdded + "개 추가", StatusKind.Normal);
+            SetStatus("목록 새로고침: 사라진 파일 " + missingRemoved + "개 제거, 참조파일 " + referenceAdded + "개 추가", StatusKind.Normal);
             UpdatePreview();
         }
 

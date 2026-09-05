@@ -71,7 +71,7 @@ The authoritative build definition is `.github/workflows/build.yml`.
 GitHub Actions builds the application on a Windows runner, runs the PNG-to-Sprite regression suite, embeds all required resources, and produces:
 
 ```text
-D2RSpriteToolkit_v4.0.2_Windows.zip
+D2RSpriteToolkit_v4.0.3_Windows.zip
 ```
 
 The package contains:
@@ -80,7 +80,7 @@ The package contains:
 D2RSpriteTK.exe
 LICENSE
 NOTICE.md
-RELEASE_NOTES_v4.0.2.md
+RELEASE_NOTES_v4.0.3.md
 ```
 
 
@@ -105,7 +105,7 @@ D2RSpriteToolkit/
 ├─ CONTRIBUTING.md
 ├─ LICENSE
 ├─ NOTICE.md
-└─ RELEASE_NOTES_v4.0.2.md
+└─ RELEASE_NOTES_v4.0.3.md
 ```
 
 ## License
