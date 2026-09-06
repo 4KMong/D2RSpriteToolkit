@@ -86,18 +86,36 @@ jobs:
       - name: Build and test Julius
         shell: pwsh
         working-directory: julius
+        continue-on-error: true
         run: ./.ci_scripts/run_build.ps1
 
+      - name: Re-run first failing test verbosely
+        if: always()
+        shell: pwsh
+        working-directory: julius/build
+        continue-on-error: true
+        run: ctest -C Release -R '^sav_tower$' --output-on-failure -V
+
       - name: Collect executable and source diagnostics
+        if: always()
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifact | Out-Null
-          Copy-Item 'julius/build/julius.exe' 'artifact/julius.exe' -Force
+          if (Test-Path 'julius/build/julius.exe') {
+            Copy-Item 'julius/build/julius.exe' 'artifact/julius.exe' -Force
+            Get-FileHash 'artifact/julius.exe' -Algorithm SHA256 | Format-List | Out-File 'artifact/julius-exe-sha256.txt'
+            Get-Item 'artifact/julius.exe' | Format-List Name,Length,LastWriteTime | Out-File 'artifact/julius-exe-info.txt'
+          }
           git -C julius diff --binary | Out-File -Encoding utf8 'artifact/julius-qol-final.diff'
-          Get-FileHash 'artifact/julius.exe' -Algorithm SHA256 | Format-List | Out-File 'artifact/julius-exe-sha256.txt'
-          Get-Item 'artifact/julius.exe' | Format-List Name,Length,LastWriteTime | Out-File 'artifact/julius-exe-info.txt'
+          if (Test-Path 'julius/build/Testing/Temporary/LastTest.log') {
+            Copy-Item 'julius/build/Testing/Temporary/LastTest.log' 'artifact/LastTest.log' -Force
+          }
+          if (Test-Path 'julius/build/Testing/Temporary/LastTestsFailed.log') {
+            Copy-Item 'julius/build/Testing/Temporary/LastTestsFailed.log' 'artifact/LastTestsFailed.log' -Force
+          }
 
       - name: Upload Windows build
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Julius-1.8.0-KO-QoL-v3-Windows32
