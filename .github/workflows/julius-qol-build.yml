@@ -1,0 +1,93 @@
+name: Temporary Julius QoL Build
+
+on:
+  push:
+    branches:
+      - tmp-julius-qol-build-20260906
+    paths:
+      - 'tmp_julius_build/**'
+      - '.github/workflows/julius-qol-build.yml'
+  workflow_dispatch:
+
+jobs:
+  build-windows-32:
+    runs-on: windows-latest
+    env:
+      SDL_VERSION: 2.32.8
+      SDL_MIXER_VERSION: 2.8.1
+      COMPILER: mingw-32
+    steps:
+      - name: Checkout temporary build host
+        uses: actions/checkout@v4
+
+      - name: Checkout Julius 1.8.0
+        uses: actions/checkout@v4
+        with:
+          repository: bvschaik/julius
+          ref: v1.8.0
+          path: julius
+          fetch-depth: 0
+
+      - name: Reassemble and verify patch bundle
+        shell: pwsh
+        run: |
+          $b64 = ''
+          Get-ChildItem 'tmp_julius_build/bundle.part*' | Sort-Object Name | ForEach-Object {
+            $b64 += [System.IO.File]::ReadAllText($_.FullName)
+          }
+          [System.IO.File]::WriteAllBytes('julius_qol_ci_bundle.zip', [Convert]::FromBase64String($b64))
+          $hash = (Get-FileHash 'julius_qol_ci_bundle.zip' -Algorithm SHA256).Hash.ToLowerInvariant()
+          Write-Host "Bundle SHA256: $hash"
+          if ($hash -ne '2ab214e222ded019fedac64201f00f61dd7ca5696e05246a39054f5ec39e5d32') {
+            throw "Bundle hash mismatch"
+          }
+          Expand-Archive 'julius_qol_ci_bundle.zip' -DestinationPath 'bundle' -Force
+
+      - name: Apply QoL patch and recovered sources
+        shell: pwsh
+        run: |
+          git -C julius apply --whitespace=nowarn ../bundle/julius-stock-source-fixed.diff
+          if ($LASTEXITCODE -ne 0) { throw "Base patch failed" }
+          python bundle/post_patch.py julius
+          if ($LASTEXITCODE -ne 0) { throw "Post patch failed" }
+          Copy-Item 'bundle/recovered_sources/src/figure/roamer_preview.c' 'julius/src/figure/roamer_preview.c' -Force
+          Copy-Item 'bundle/recovered_sources/src/figure/roamer_preview.h' 'julius/src/figure/roamer_preview.h' -Force
+          Copy-Item 'bundle/recovered_sources/src/graphics/augustus_qol_assets.c' 'julius/src/graphics/augustus_qol_assets.c' -Force
+          Copy-Item 'bundle/recovered_sources/src/graphics/augustus_qol_assets.h' 'julius/src/graphics/augustus_qol_assets.h' -Force
+          git -C julius diff --check
+          if ($LASTEXITCODE -ne 0) { throw "git diff --check failed" }
+          git -C julius status --short
+
+      - name: Set up MSYS2 MinGW 32-bit
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: mingw32
+          location: D:\
+          install: mingw-w64-i686-gcc
+          update: true
+
+      - name: Install Julius SDL dependencies
+        shell: pwsh
+        working-directory: julius
+        run: ./.ci_scripts/install_sdl.ps1
+
+      - name: Build and test Julius
+        shell: pwsh
+        working-directory: julius
+        run: ./.ci_scripts/run_build.ps1
+
+      - name: Collect executable and source diagnostics
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifact | Out-Null
+          Copy-Item 'julius/build/julius.exe' 'artifact/julius.exe' -Force
+          git -C julius diff --binary | Out-File -Encoding utf8 'artifact/julius-qol-final.diff'
+          Get-FileHash 'artifact/julius.exe' -Algorithm SHA256 | Format-List | Out-File 'artifact/julius-exe-sha256.txt'
+          Get-Item 'artifact/julius.exe' | Format-List Name,Length,LastWriteTime | Out-File 'artifact/julius-exe-info.txt'
+
+      - name: Upload Windows build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Julius-1.8.0-KO-QoL-v3-Windows32
+          path: artifact/
+          if-no-files-found: error
