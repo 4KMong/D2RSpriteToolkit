@@ -42,6 +42,8 @@ jobs:
             throw "Bundle hash mismatch"
           }
           Expand-Archive 'julius_qol_ci_bundle.zip' -DestinationPath 'bundle' -Force
+          python tmp_julius_build/fix_post_patch_v2.py
+          if ($LASTEXITCODE -ne 0) { throw "Post-patch hotfix failed" }
 
       - name: Apply QoL patch and recovered sources
         shell: pwsh
