@@ -56,6 +56,8 @@ jobs:
           Copy-Item 'bundle/recovered_sources/src/figure/roamer_preview.h' 'julius/src/figure/roamer_preview.h' -Force
           Copy-Item 'bundle/recovered_sources/src/graphics/augustus_qol_assets.c' 'julius/src/graphics/augustus_qol_assets.c' -Force
           Copy-Item 'bundle/recovered_sources/src/graphics/augustus_qol_assets.h' 'julius/src/graphics/augustus_qol_assets.h' -Force
+          python tmp_julius_build/final_cleanup_v3.py julius
+          if ($LASTEXITCODE -ne 0) { throw "Final clean-v2 compatibility cleanup failed" }
           git -C julius diff --check
           if ($LASTEXITCODE -ne 0) { throw "git diff --check failed" }
           git -C julius status --short
