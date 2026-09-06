@@ -58,6 +58,16 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "git diff --check failed" }
           git -C julius status --short
 
+      - name: Make Julius legacy CMake compatible with current runner
+        shell: pwsh
+        working-directory: julius
+        run: |
+          $text = Get-Content 'CMakeLists.txt' -Raw
+          $updated = [regex]::Replace($text, 'cmake_minimum_required\s*\(\s*VERSION\s+[0-9.]+\s*\)', 'cmake_minimum_required(VERSION 3.5)', 1)
+          if ($updated -eq $text) { throw 'Could not update cmake_minimum_required' }
+          [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'CMakeLists.txt'), $updated)
+          Get-Content 'CMakeLists.txt' -TotalCount 3
+
       - name: Set up MSYS2 MinGW 32-bit
         uses: msys2/setup-msys2@v2
         with:
